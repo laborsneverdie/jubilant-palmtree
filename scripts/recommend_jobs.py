@@ -2163,13 +2163,10 @@ def crawl_iguopin_by_city(keyword, city):
     }
     city_code = iguopin_city_map.get(city.replace("市", ""))
 
-    # 搜索策略1: 带城市编码的精准搜索
+    # 搜索策略1: 带城市编码的精准搜索 + 城市名关键词补充
     payloads = []
     if city_code:
         payloads.append({"page": 1, "page_size": 50, "keyword": keyword, "city": city_code})
-        # 也搜索不带关键词的（获取该城市所有岗位）
-        payloads.append({"page": 1, "page_size": 50, "city": city_code})
-    # 搜索策略2: 用城市名作为关键词补充搜索
     payloads.append({"page": 1, "page_size": 50, "keyword": f"{keyword} {city}"})
 
     results = []
@@ -2489,8 +2486,16 @@ def generate_recommendations(user):
         job.pop("_raw_edu", None)
         job.pop("_raw_exp", None)
 
+    # 按匹配度过滤：>=50 分才推荐，不足5条时放宽到 >=30
+    min_score = 50
+    qualified = [j for j in filtered if j.get("match_score", 0) >= min_score]
+    if len(qualified) < 5:
+        min_score = 30
+        qualified = [j for j in filtered if j.get("match_score", 0) >= min_score]
+        print(f"\n⚠️ >=50分仅 {len([j for j in filtered if j.get('match_score',0) >= 50])} 条，放宽到 >=30 分")
+
     # 限制返回数量（最多20条）
-    result = filtered[:20]
+    result = qualified[:20]
 
     print("\n" + "=" * 60)
     print(f"岗位推荐生成完成！共 {len(result)} 条岗位")
