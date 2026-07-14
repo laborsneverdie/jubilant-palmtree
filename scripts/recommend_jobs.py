@@ -597,88 +597,80 @@ def calculate_match_score(job, user):
     """
     计算岗位与用户的匹配度 (0-100)。
 
-    评分维度（城市第一优先）：
-    - 城市匹配 (0-50)：岗位地点 = 用户常驻城市 = 满分50（第一优先级）
-    - 方向匹配 (0-30)：求职方向与岗位名称/描述相关度（第二优先级）
-    - 学历匹配 (0-10)：用户学历 >= 岗位要求 = 高分
-    - 经验匹配 (0-10)：用户经验 >= 岗位要求 = 高分
+    评分维度（城市已在前置筛选完成，专业方向第一优先）：
+    - 方向匹配 (0-50)：求职方向与岗位名称/描述相关度（第一优先级）
+    - 学历匹配 (0-25)：用户学历 >= 岗位要求 = 高分
+    - 经验匹配 (0-25)：用户经验 >= 岗位要求 = 高分
     """
     score = 0
 
-    # --- 城市匹配 (0-50) ★ 第一优先级 ---
-    user_city = user.get("city", "")
-    job_location = job.get("work_location") or job.get("city") or ""
-    if _is_city_match(job_location, user_city):
-        score += 50  # 常驻城市完全匹配
-    elif user_city and job_location:
-        # 同省判断
-        user_province = PROVINCE_MAP.get(user_city.replace("市", ""), "")
-        job_province = ""
-        for city_key, prov in PROVINCE_MAP.items():
-            if city_key in job_location:
-                job_province = prov
-                break
-        if user_province and job_province and user_province == job_province:
-            score += 25  # 同省不同城
-        else:
-            score += 5   # 不同省
-    else:
-        score += 5  # 无地点信息
-
-    # --- 方向匹配 (0-30) ★ 第二优先级 ---
+    # --- 方向匹配 (0-50) ★ 第一优先级 ---
     user_field = (user.get("field") or user.get("direction") or "").lower().strip()
     job_title = (job.get("job_title") or "").lower()
     job_desc = (job.get("_raw_contents") or job.get("job_desc") or "").lower()
-    if user_field:
-        # 标题匹配权重高
-        if user_field in job_title:
-            score += 30
-        elif any(word in job_title for word in user_field.split() if len(word) >= 2):
-            score += 20
-        # 描述匹配
-        elif user_field in job_desc:
-            score += 15
-        else:
-            # 关键词分词匹配
-            field_keywords = [w for w in re.split(r"[/\-_,，\s]+", user_field) if len(w) >= 2]
-            match_count = sum(1 for kw in field_keywords if kw in job_title or kw in job_desc)
-            if match_count > 0:
-                score += min(match_count * 8, 20)
-            else:
-                score += 3
-    else:
-        score += 10  # 无方向信息，给中间分
 
-    # --- 学历匹配 (0-10) ---
+    if user_field:
+        # 拆分：英文=核心技能(Python/Java), 中文=通用角色(开发/工程师)
+        en_skills = [w.lower() for w in re.findall(r'[a-zA-Z0-9]+', user_field)]
+        cn_roles = re.findall(r'[\u4e00-\u9fff]+', user_field)
+
+        # 1. 完整字段匹配在标题中 → 满分
+        if user_field in job_title:
+            score += 50
+        # 2. 全部英文技能词出现在标题中
+        elif en_skills and all(kw in job_title for kw in en_skills):
+            score += 45
+        # 3. 至少一个英文技能词出现在标题中 (核心技能对口)
+        elif en_skills and any(kw in job_title for kw in en_skills):
+            score += 35
+        # 4. 英文技能词出现在描述中
+        elif en_skills and any(kw in job_desc for kw in en_skills):
+            score += 20
+        # 5. 中文角色词出现在标题中 (如"开发"匹配但不含具体技能)
+        elif cn_roles and any(kw in job_title for kw in cn_roles):
+            score += 10
+        # 6. 中文角色词出现在描述中
+        elif cn_roles and any(kw in job_desc for kw in cn_roles):
+            score += 5
+        # 7. 完全不对口
+        else:
+            score += 0
+    else:
+        score += 25  # 无方向信息，给中间分
+
+    # --- 学历匹配 (0-25) ---
     user_edu = user.get("degree") or user.get("education") or ""
     job_edu = job.get("_raw_edu") or job.get("education_req") or ""
     user_edu_level = _parse_edu_level(user_edu)
     job_edu_level = _parse_edu_level(job_edu)
     if job_edu_level == 0:
-        score += 8   # 不限学历
+        score += 20  # 不限学历
     elif user_edu_level >= job_edu_level:
-        score += 10  # 完全满足
+        score += 25  # 完全满足
     elif user_edu_level == job_edu_level - 1:
-        score += 6   # 差一档
+        score += 15  # 差一档
     else:
-        score += 2
+        score += 5
 
-    # --- 经验匹配 (0-10) ---
+    # --- 经验匹配 (0-25) ---
     user_exp = user.get("experience") or ""
     job_exp = job.get("_raw_exp") or job.get("experience_req") or ""
     user_exp_level = _parse_exp_level(user_exp)
     job_exp_level = _parse_exp_level(job_exp)
     if job_exp_level == 0:
-        score += 8   # 不限经验
+        score += 20  # 不限经验
     elif user_exp_level >= job_exp_level:
-        score += 10  # 经验满足
+        score += 25  # 经验满足
     elif user_exp_level == job_exp_level - 1:
-        score += 6
+        score += 15  # 差一档
     else:
-        score += 2
+        score += 5
 
-    # 限制在 0-100
-    return max(0, min(100, score))
+    # 如果方向完全不匹配，总分上限压低（防止不对口岗位排到前面）
+    if user_field and score <= 50:  # 方向0分 + 学历 + 经验 ≤ 50
+        score = min(score, 40)
+
+    return min(score, 100)
 
 
 # ============================================================
