@@ -968,8 +968,12 @@ def _auto_detect_job_cards(page, site_name):
         )
         _EXCLUDE_TXT_RE = re.compile(
             r"版权所有|Copyright|copyight|ICP备|备案号|公司首页|官方微博"
-            r"|官方微信|APP下载|常见问题|清空\s*$|^城市\s*$",
+            r"|官方微信|APP下载|常见问题|清空\s*$|^城市\s*$"
+            r"|请求\s*ID|Security Verification|Captcha|验证码"
+            r"|DNS解析失败|Network is unreachable|connection refused",
         )
+        # 排除极短/无意义的 class 名（如 't j', 'a b' 等单字母组合）
+        _EXCLUDE_CLS_INVALID = re.compile(r"^[a-z]\s[a-z]$", re.IGNORECASE)
 
         cards = []
         for m in markers:
@@ -977,6 +981,8 @@ def _auto_detect_job_cards(page, site_name):
             prw_str = m.get("preview", "")
 
             if _EXCLUDE_CLS_RE.search(cls_str):
+                continue
+            if _EXCLUDE_CLS_INVALID.match(cls_str):
                 continue
             if _EXCLUDE_TXT_RE.search(prw_str):
                 continue
@@ -1133,7 +1139,12 @@ def crawl_boss(keyword, city=None):
             page.wait_for_timeout(wait_seconds * 1000)
 
             # 检查是否被反爬或要求登录
-            page_content = page.content()
+            try:
+                page_content = page.content()
+            except Exception:
+                print("[BOSS直聘] ⚠️ 页面仍在导航中，跳过该网站")
+                browser.close()
+                return []
             page_title = page.title()
             if "安全验证" in page_content or "验证码" in page_content or "slider" in page_content.lower():
                 print("[BOSS直聘] ⚠️ 被反爬拦截，跳过该网站")
@@ -1316,15 +1327,26 @@ def crawl_zhaopin(keyword, city=None):
             page_title = page.title()
             print(f"[智联招聘] 页面标题: {page_title}")
 
+            # 快速检测安全验证页面（不等待 DOM 解析）
+            if "Security Verification" in page_title or "安全验证" in page_title:
+                print("[智联招聘] ⚠️ 触发安全验证页面（GitHub Actions IP 被限制），跳过")
+                browser.close()
+                return []
+
             # 智联招聘岗位卡片 —— 已验证选择器 (2026-07)
             job_cards = page.query_selector_all(".joblist-box__item")
             print(f"[智联招聘] ✓ 找到 {len(job_cards)} 个岗位卡片 (.joblist-box__item)")
 
             # 如果没有卡片，再检查是否被反爬
             if not job_cards:
-                page_content = page.content()
+                try:
+                    page_content = page.content()
+                except Exception:
+                    print("[智联招聘] ⚠️ 页面仍在加载中，跳过")
+                    browser.close()
+                    return []
                 # 真正的反爬特征（不在正常页面源码中）
-                real_block_signs = ["请完成安全验证", "拖动滑块", "geetest_embed", "滑动验证"]
+                real_block_signs = ["请完成安全验证", "拖动滑块", "geetest_embed", "滑动验证", "Security Verification", "gcaptcha"]
                 if any(s in page_content[:10000] for s in real_block_signs):
                     print("[智联招聘] ⚠️ 触发反爬验证，跳过该网站")
                     browser.close()
